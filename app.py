@@ -1,8 +1,11 @@
 """
 Social Media Video / Story Downloader
 -------------------------------------
-Local web app that wraps yt-dlp. Paste a URL, pick a quality, download.
+Local / hosted web app that wraps yt-dlp. Paste a URL, pick a quality, download.
 Supports YouTube, TikTok, Instagram, Facebook, Twitter/X, and 1000+ sites.
+
+Playlists, story sets and carousels are expanded into a list so each video can
+be downloaded separately.
 
 Run:  python app.py   ->  open http://127.0.0.1:5000
 """
@@ -27,6 +30,9 @@ DOWNLOAD_DIR.mkdir(exist_ok=True)
 # Optional: a cookies.txt next to this file lets you fetch private / login-gated
 # stories (Instagram/Facebook). Export it with a browser "Get cookies.txt" extension.
 COOKIES_FILE = Path(__file__).parent / "cookies.txt"
+
+# Safety cap so an enormous playlist can't hang the info request forever.
+MAX_ENTRIES = 100
 
 
 def find_ffmpeg():
@@ -67,6 +73,56 @@ def safe_name(text):
     return text.strip()[:120] or "video"
 
 
+def best_thumb(entry):
+    """Pick a usable thumbnail URL from either the flat field or the list."""
+    if entry.get("thumbnail"):
+        return entry["thumbnail"]
+    thumbs = entry.get("thumbnails") or []
+    if thumbs:
+        return thumbs[-1].get("url")
+    return None
+
+
+def heights_of(entry):
+    """Distinct video heights actually available for one entry."""
+    hs = set()
+    for f in entry.get("formats", []) or []:
+        if f.get("vcodec") not in (None, "none") and f.get("height"):
+            hs.add(int(f["height"]))
+    return hs
+
+
+def qualities_from_heights(heights):
+    qs = [{"id": f"h{h}", "label": f"{h}p", "height": h}
+          for h in sorted(heights, reverse=True)]
+    if not qs:  # some sites expose one merged file only
+        qs.append({"id": "best", "label": "Best available", "height": 0})
+    qs.append({"id": "audio", "label": "Audio only (MP3)", "height": -1})
+    return qs
+
+
+def default_qualities():
+    """When per-entry formats aren't known up front (flat playlists)."""
+    qs = [{"id": "best", "label": "Best available", "height": 0}]
+    qs += [{"id": f"h{h}", "label": f"{h}p", "height": h} for h in (1080, 720, 480, 360)]
+    qs.append({"id": "audio", "label": "Audio only (MP3)", "height": -1})
+    return qs
+
+
+def entry_dict(entry, index, parent_url):
+    """Normalize one video (single or playlist member) for the frontend."""
+    return {
+        "index": entry.get("playlist_index") or index,
+        # Direct link to the single video; used to download just this one.
+        "url": entry.get("webpage_url") or entry.get("original_url") or entry.get("url"),
+        "parent_url": parent_url,
+        "title": entry.get("title") or f"Video {index}",
+        "uploader": entry.get("uploader") or entry.get("channel") or "",
+        "thumbnail": best_thumb(entry),
+        "duration": entry.get("duration"),
+    }
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -74,55 +130,78 @@ def index():
 
 @app.route("/api/info", methods=["POST"])
 def info():
-    """Fetch metadata + available qualities without downloading."""
+    """Fetch metadata + available qualities without downloading.
+
+    Always returns a normalized shape:
+        { type, title, count, qualities, entries: [ {index,url,title,...}, ... ] }
+    A single video is just a one-item list.
+    """
     url = (request.json or {}).get("url", "").strip()
     if not url:
         return jsonify({"error": "Please paste a URL."}), 400
 
     try:
-        with YoutubeDL({**base_opts(), "skip_download": True}) as ydl:
+        with YoutubeDL({**base_opts(), "skip_download": True,
+                        "playlistend": MAX_ENTRIES}) as ydl:
             data = ydl.extract_info(url, download=False)
     except Exception as e:
         return jsonify({"error": f"Could not read this link: {e}"}), 400
 
-    # Playlists / story collections: use the first entry for preview.
+    # ---- Playlist / story set / carousel ----
     if data.get("_type") == "playlist" and data.get("entries"):
-        entries = [e for e in data["entries"] if e]
-        data = entries[0] if entries else data
+        raw = [e for e in data["entries"] if e][:MAX_ENTRIES]
+        if not raw:
+            return jsonify({"error": "This link has no downloadable videos."}), 400
 
-    # Collect the distinct video heights that are actually available.
-    heights = set()
-    for f in data.get("formats", []):
-        if f.get("vcodec") not in (None, "none") and f.get("height"):
-            heights.add(int(f["height"]))
+        entries, all_heights = [], set()
+        for i, e in enumerate(raw, start=1):
+            all_heights |= heights_of(e)
+            entries.append(entry_dict(e, i, parent_url=url))
 
-    qualities = []
-    for h in sorted(heights, reverse=True):
-        qualities.append({"id": f"h{h}", "label": f"{h}p", "height": h})
-    if not qualities:  # some sites expose one merged file only
-        qualities.append({"id": "best", "label": "Best available", "height": 0})
-    qualities.append({"id": "audio", "label": "Audio only (MP3)", "height": -1})
+        qualities = qualities_from_heights(all_heights) if all_heights else default_qualities()
+        return jsonify({
+            "type": "playlist",
+            "title": data.get("title") or "Playlist",
+            "count": len(entries),
+            "qualities": qualities,
+            "entries": entries,
+        })
 
+    # ---- Single video ----
+    qualities = qualities_from_heights(heights_of(data))
     return jsonify({
+        "type": "video",
         "title": data.get("title") or "Untitled",
-        "uploader": data.get("uploader") or data.get("channel") or "",
-        "thumbnail": data.get("thumbnail"),
-        "duration": data.get("duration"),
+        "count": 1,
         "qualities": qualities,
+        "entries": [entry_dict(data, 1, parent_url=url)],
     })
 
 
 @app.route("/api/download", methods=["POST"])
 def download():
     body = request.json or {}
-    url = body.get("url", "").strip()
+    # `url` is the specific video's own link. For flat playlists that lack a
+    # per-entry link we fall back to the parent URL + playlist index.
+    url = (body.get("url") or "").strip()
+    parent_url = (body.get("parent_url") or "").strip()
+    index = body.get("index")
     quality = body.get("quality", "best")
-    if not url:
+
+    target = url or parent_url
+    if not target:
         return jsonify({"error": "Missing URL."}), 400
 
     tmpdir = tempfile.mkdtemp(dir=DOWNLOAD_DIR)
     outtmpl = str(Path(tmpdir) / "%(title).100s.%(ext)s")
     opts = {**base_opts(), "outtmpl": outtmpl, "restrictfilenames": False}
+
+    # If we only have the parent link, restrict the download to this one item.
+    if not url and parent_url and index:
+        opts["playlist_items"] = str(index)
+    else:
+        # We have a direct single-video link — never expand it into a playlist.
+        opts["noplaylist"] = True
 
     if quality == "audio":
         opts["format"] = "bestaudio/best"
@@ -145,7 +224,7 @@ def download():
 
     try:
         with YoutubeDL(opts) as ydl:
-            ydl.extract_info(url, download=True)
+            ydl.extract_info(target, download=True)
     except Exception as e:
         shutil.rmtree(tmpdir, ignore_errors=True)
         return jsonify({"error": f"Download failed: {e}"}), 400

@@ -60,6 +60,23 @@
     .chip.active { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; }
     .actions { margin-top: 18px; }
     .actions button { width: 100%; }
+    /* Per-video list */
+    .list-title { margin: 20px 0 10px; font-size: .9rem; color: var(--muted); }
+    .items { display: flex; flex-direction: column; gap: 10px; }
+    .item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px; border-radius: 12px;
+      border: 1px solid var(--border); background: rgba(0,0,0,.2);
+    }
+    .item img { width: 84px; height: 48px; object-fit: cover; border-radius: 8px; background:#000; flex: none; }
+    .item .info { flex: 1; min-width: 0; }
+    .item .name {
+      font-weight: 600; font-size: .9rem; line-height: 1.25;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .item .meta { color: var(--muted); font-size: .78rem; margin-top: 2px; }
+    .item button { padding: 9px 14px; font-size: .85rem; white-space: nowrap; flex: none; }
+    .item.done { border-color: var(--ok); }
     .msg { margin-top: 14px; font-size: .9rem; text-align: center; min-height: 20px; }
     .msg.err { color: var(--err); }
     .msg.ok  { color: var(--ok); }
@@ -84,18 +101,10 @@
       </div>
 
       <div class="preview" id="preview">
-        <div class="media">
-          <img id="thumb" alt="" />
-          <div>
-            <div class="t" id="title"></div>
-            <div class="u" id="uploader"></div>
-          </div>
-        </div>
         <div class="q-title">Choose quality</div>
         <div class="qualities" id="qualities"></div>
-        <div class="actions">
-          <button id="dlBtn" onclick="download()">⬇ Download</button>
-        </div>
+        <div class="list-title" id="listTitle"></div>
+        <div class="items" id="items"></div>
       </div>
 
       <div class="msg" id="msg"></div>
@@ -110,6 +119,7 @@
 
 <script>
 let selectedQuality = null;
+let entries = [];
 
 function setMsg(text, cls) {
   const m = document.getElementById('msg');
@@ -134,13 +144,9 @@ async function fetchInfo() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Failed');
 
-    document.getElementById('title').textContent = data.title;
-    document.getElementById('uploader').textContent =
-      (data.uploader ? data.uploader + '  ·  ' : '') + fmtDur(data.duration);
-    const thumb = document.getElementById('thumb');
-    if (data.thumbnail) { thumb.src = data.thumbnail; thumb.style.display = ''; }
-    else thumb.style.display = 'none';
+    entries = data.entries || [];
 
+    // Quality chips (one global choice, applied per-download).
     const box = document.getElementById('qualities');
     box.innerHTML = '';
     selectedQuality = null;
@@ -157,6 +163,41 @@ async function fetchInfo() {
       if (i === 0) c.click();
     });
 
+    // List heading.
+    const lt = document.getElementById('listTitle');
+    lt.textContent = data.type === 'playlist'
+      ? `${data.count} videos found — download each separately`
+      : 'Video';
+
+    // One row per video, each with its own download button.
+    const list = document.getElementById('items');
+    list.innerHTML = '';
+    entries.forEach((e, i) => {
+      const row = document.createElement('div');
+      row.className = 'item';
+      row.id = 'item-' + i;
+
+      const img = document.createElement('img');
+      if (e.thumbnail) img.src = e.thumbnail; else img.style.visibility = 'hidden';
+
+      const info = document.createElement('div');
+      info.className = 'info';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = e.title || ('Video ' + (i + 1));
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = (e.uploader ? e.uploader + '  ·  ' : '') + fmtDur(e.duration);
+      info.appendChild(name); info.appendChild(meta);
+
+      const b = document.createElement('button');
+      b.textContent = '⬇ Download';
+      b.onclick = () => downloadEntry(i, b);
+
+      row.appendChild(img); row.appendChild(info); row.appendChild(b);
+      list.appendChild(row);
+    });
+
     document.getElementById('preview').style.display = 'block';
     setMsg('');
   } catch (e) {
@@ -166,18 +207,24 @@ async function fetchInfo() {
   }
 }
 
-async function download() {
-  const url = document.getElementById('url').value.trim();
-  if (!url || !selectedQuality) return;
-  const btn = document.getElementById('dlBtn');
+async function downloadEntry(i, btn) {
+  const e = entries[i];
+  if (!e || !selectedQuality) return;
+  const label = btn.textContent;
   btn.disabled = true;
-  setMsg('<span class="spinner"></span>Downloading & processing… this can take a moment.');
+  btn.innerHTML = '<span class="spinner"></span>';
+  setMsg('<span class="spinner"></span>Downloading “' + (e.title || ('Video ' + (i + 1))) + '”…');
 
   try {
     const res = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, quality: selectedQuality })
+      body: JSON.stringify({
+        url: e.url,
+        parent_url: e.parent_url,
+        index: e.index,
+        quality: selectedQuality
+      })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -192,11 +239,14 @@ async function download() {
     a.href = URL.createObjectURL(blob);
     a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
+
+    document.getElementById('item-' + i).classList.add('done');
+    btn.textContent = '✓ Saved';
     setMsg('✓ Saved to your Downloads folder.', 'ok');
-  } catch (e) {
-    setMsg(e.message, 'err');
-  } finally {
+  } catch (err) {
     btn.disabled = false;
+    btn.textContent = label;
+    setMsg(err.message, 'err');
   }
 }
 
