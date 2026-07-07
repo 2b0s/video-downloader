@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video &amp; Story Downloader</title>
+  <style>
+    :root {
+      --bg1: #0f172a; --bg2: #1e1b4b;
+      --card: rgba(255,255,255,0.06);
+      --border: rgba(255,255,255,0.12);
+      --accent: #6366f1; --accent2: #8b5cf6;
+      --text: #e2e8f0; --muted: #94a3b8;
+      --ok: #22c55e; --err: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, var(--bg1), var(--bg2));
+      display: flex; align-items: flex-start; justify-content: center;
+      padding: 40px 16px;
+    }
+    .wrap { width: 100%; max-width: 640px; }
+    h1 { font-size: 1.7rem; margin: 0 0 4px; text-align: center; }
+    .sub { text-align: center; color: var(--muted); margin-bottom: 28px; font-size: .95rem; }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 18px; padding: 22px; backdrop-filter: blur(10px);
+      box-shadow: 0 20px 50px rgba(0,0,0,.35);
+    }
+    .row { display: flex; gap: 10px; }
+    input[type=text] {
+      flex: 1; padding: 14px 16px; border-radius: 12px;
+      border: 1px solid var(--border); background: rgba(0,0,0,.25);
+      color: var(--text); font-size: 1rem; outline: none;
+    }
+    input[type=text]:focus { border-color: var(--accent); }
+    button {
+      border: none; cursor: pointer; font-size: 1rem; font-weight: 600;
+      border-radius: 12px; padding: 14px 20px; color: white;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      transition: transform .1s, opacity .2s;
+    }
+    button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .preview { display: none; margin-top: 22px; }
+    .media { display: flex; gap: 14px; align-items: center; }
+    .media img { width: 120px; height: 68px; object-fit: cover; border-radius: 10px; background:#000; }
+    .media .t { font-weight: 600; line-height: 1.3; }
+    .media .u { color: var(--muted); font-size: .85rem; margin-top: 2px; }
+    .q-title { margin: 20px 0 10px; font-size: .9rem; color: var(--muted); }
+    .qualities { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      padding: 9px 14px; border-radius: 10px; cursor: pointer;
+      border: 1px solid var(--border); background: rgba(0,0,0,.2);
+      font-size: .9rem; user-select: none; transition: .15s;
+    }
+    .chip:hover { border-color: var(--accent); }
+    .chip.active { background: linear-gradient(135deg, var(--accent), var(--accent2)); border-color: transparent; }
+    .actions { margin-top: 18px; }
+    .actions button { width: 100%; }
+    .msg { margin-top: 14px; font-size: .9rem; text-align: center; min-height: 20px; }
+    .msg.err { color: var(--err); }
+    .msg.ok  { color: var(--ok); }
+    .spinner {
+      display: inline-block; width: 16px; height: 16px; vertical-align: -3px;
+      border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+      border-radius: 50%; animation: spin .7s linear infinite; margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hint { margin-top: 20px; color: var(--muted); font-size: .78rem; text-align: center; line-height: 1.5; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🎬 Video &amp; Story Downloader</h1>
+    <div class="sub">Paste a link from YouTube, TikTok, Instagram, Facebook, X — pick a quality, download.</div>
+
+    <div class="card">
+      <div class="row">
+        <input id="url" type="text" placeholder="Paste video / story URL here…" autocomplete="off" />
+        <button id="fetchBtn" onclick="fetchInfo()">Fetch</button>
+      </div>
+
+      <div class="preview" id="preview">
+        <div class="media">
+          <img id="thumb" alt="" />
+          <div>
+            <div class="t" id="title"></div>
+            <div class="u" id="uploader"></div>
+          </div>
+        </div>
+        <div class="q-title">Choose quality</div>
+        <div class="qualities" id="qualities"></div>
+        <div class="actions">
+          <button id="dlBtn" onclick="download()">⬇ Download</button>
+        </div>
+      </div>
+
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="hint">
+      Runs 100% locally on your machine. For private / login-only stories,
+      place a <b>cookies.txt</b> next to app.py.<br/>
+      Only download content you have the right to use.
+    </div>
+  </div>
+
+<script>
+let selectedQuality = null;
+
+function setMsg(text, cls) {
+  const m = document.getElementById('msg');
+  m.className = 'msg ' + (cls || '');
+  m.innerHTML = text;
+}
+
+async function fetchInfo() {
+  const url = document.getElementById('url').value.trim();
+  if (!url) { setMsg('Please paste a URL first.', 'err'); return; }
+  const btn = document.getElementById('fetchBtn');
+  btn.disabled = true;
+  document.getElementById('preview').style.display = 'none';
+  setMsg('<span class="spinner"></span>Reading link…');
+
+  try {
+    const res = await fetch('/api/info', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed');
+
+    document.getElementById('title').textContent = data.title;
+    document.getElementById('uploader').textContent =
+      (data.uploader ? data.uploader + '  ·  ' : '') + fmtDur(data.duration);
+    const thumb = document.getElementById('thumb');
+    if (data.thumbnail) { thumb.src = data.thumbnail; thumb.style.display = ''; }
+    else thumb.style.display = 'none';
+
+    const box = document.getElementById('qualities');
+    box.innerHTML = '';
+    selectedQuality = null;
+    data.qualities.forEach((q, i) => {
+      const c = document.createElement('div');
+      c.className = 'chip';
+      c.textContent = q.label;
+      c.onclick = () => {
+        document.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
+        c.classList.add('active');
+        selectedQuality = q.id;
+      };
+      box.appendChild(c);
+      if (i === 0) c.click();
+    });
+
+    document.getElementById('preview').style.display = 'block';
+    setMsg('');
+  } catch (e) {
+    setMsg(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function download() {
+  const url = document.getElementById('url').value.trim();
+  if (!url || !selectedQuality) return;
+  const btn = document.getElementById('dlBtn');
+  btn.disabled = true;
+  setMsg('<span class="spinner"></span>Downloading & processing… this can take a moment.');
+
+  try {
+    const res = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, quality: selectedQuality })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Download failed');
+    }
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    const match = cd.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+    const name = match ? decodeURIComponent(match[1]) : 'video.mp4';
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setMsg('✓ Saved to your Downloads folder.', 'ok');
+  } catch (e) {
+    setMsg(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function fmtDur(s) {
+  if (!s) return '';
+  s = Math.round(s);
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m + ':' + String(sec).padStart(2, '0');
+}
+
+document.getElementById('url').addEventListener('keydown', e => {
+  if (e.key === 'Enter') fetchInfo();
+});
+</script>
+</body>
+</html>
