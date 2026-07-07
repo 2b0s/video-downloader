@@ -39,6 +39,10 @@ MAX_ENTRIES = 100
 # e.g. YTDLP_PROXY=http://user:pass@host:port  (or socks5://…)
 YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
 
+# Optional ISO country code (e.g. AE, EG) for region-locked videos. Best-effort:
+# spoofs the request's country so geo-restricted content can be reached.
+GEO_BYPASS_COUNTRY = os.environ.get("GEO_BYPASS_COUNTRY", "").strip().upper()
+
 
 def find_ffmpeg():
     """Locate ffmpeg so yt-dlp can merge HD video+audio streams."""
@@ -72,6 +76,10 @@ def base_opts():
         opts["cookiefile"] = str(COOKIES_FILE)
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
+    # Best-effort bypass of geo-restrictions (spoofs the X-Forwarded-For country).
+    opts["geo_bypass"] = True
+    if GEO_BYPASS_COUNTRY:
+        opts["geo_bypass_country"] = GEO_BYPASS_COUNTRY
     # Force YouTube's POT-backed web clients so the bgutil token provider is
     # actually used — this is what clears the "confirm you're not a bot" wall on
     # datacenter IPs. Only affects the youtube extractor; other sites are untouched.
@@ -89,6 +97,13 @@ def friendly_error(exc):
     msg = str(exc)
     low = msg.lower()
 
+    if ("not available in your country" in low or "in your country" in low
+            or "geo restrict" in low or "geo-restrict" in low
+            or "بلدك" in msg or "غير متاح" in msg):
+        return ("هذا الفيديو محظور جغرافياً في بلد الخادم. الحل: proxy سكني في "
+                "إحدى الدول المسموح بها، أو استخدم التطبيق المحلي على جهازك إن كنت "
+                "داخل الدول المسموح بها. — This video is geo-restricted; use a "
+                "residential proxy in an allowed country, or run the local app.")
     if "not a bot" in low or "sign in to confirm" in low:
         return ("تعذّر تحميل هذا الفيديو من يوتيوب: الموقع محظور من عنوان الخادم "
                 "(IP مركز بيانات). الحل: أضف proxy سكني في إعدادات Render، "
