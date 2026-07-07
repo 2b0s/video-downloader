@@ -286,27 +286,24 @@ def diag():
     except Exception as e:
         out["yt_dlp_version"] = f"ERR: {e}"
 
-    # 3) Real extraction with verbose logging captured — did it fetch a POT?
-    logs = []
-
-    class _Logger:
-        def debug(self, m): logs.append(str(m))
-        def info(self, m): logs.append(str(m))
-        def warning(self, m): logs.append(str(m))
-        def error(self, m): logs.append(str(m))
-
-    try:
-        opts = {**base_opts(), "skip_download": True, "verbose": True,
-                "quiet": False, "no_warnings": False, "logger": _Logger()}
-        with YoutubeDL(opts) as ydl:
-            ydl.extract_info("https://www.youtube.com/watch?v=aqz-KE-bpKQ",
-                             download=False)
-        out["youtube_extract"] = "OK"
-    except Exception as e:
-        out["youtube_extract"] = f"FAIL: {e}"
-
-    out["pot_logs"] = [l for l in logs
-                       if "pot" in l.lower() or "PO Token" in l][:30]
+    # 3) Probe each YouTube player client — find one that slips past the
+    #    datacenter-IP bot check without cookies. ?clients=web,tv,ios to override.
+    test_url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+    default_clients = "web_safari,web,tv,tv_embedded,mweb,ios,android,web_embedded"
+    clients = [c.strip() for c in
+               (request.args.get("clients") or default_clients).split(",") if c.strip()]
+    probe = {}
+    for c in clients:
+        try:
+            o = {k: v for k, v in base_opts().items() if k != "extractor_args"}
+            o.update({"skip_download": True, "quiet": True, "no_warnings": True})
+            o["extractor_args"] = {"youtube": {"player_client": [c]}}
+            with YoutubeDL(o) as ydl:
+                data = ydl.extract_info(test_url, download=False)
+            probe[c] = f"OK ({len(data.get('formats') or [])} formats)"
+        except Exception as e:
+            probe[c] = "FAIL: " + str(e).splitlines()[0][:90]
+    out["client_probe"] = probe
     return jsonify(out)
 
 
