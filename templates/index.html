@@ -138,7 +138,7 @@ async function fetchInfo() {
   try {
     const res = await fetch('/api/info', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
       body: JSON.stringify({ url })
     });
     const data = await res.json();
@@ -218,7 +218,7 @@ async function downloadEntry(i, btn) {
   try {
     const res = await fetch('/api/download', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
       body: JSON.stringify({
         url: e.url,
         parent_url: e.parent_url,
