@@ -207,8 +207,28 @@ function fmtDur(s) {
   return m + ':' + String(sec).padStart(2, '0');
 }
 
-document.getElementById('url').addEventListener('keydown', e => {
+const urlInput = document.getElementById('url');
+
+urlInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') fetchInfo();
+});
+
+// Auto-fetch the instant a link is pasted.
+urlInput.addEventListener('paste', e => {
+  const pasted = (e.clipboardData || window.clipboardData).getData('text').trim();
+  if (/^https?:\/\//i.test(pasted)) {
+    setTimeout(fetchInfo, 50); // let the value settle into the input first
+  }
+});
+
+// Also auto-fetch if a full URL is typed/dropped (debounced).
+let typeTimer = null;
+urlInput.addEventListener('input', () => {
+  clearTimeout(typeTimer);
+  const v = urlInput.value.trim();
+  if (/^https?:\/\/\S{6,}$/i.test(v)) {
+    typeTimer = setTimeout(fetchInfo, 700);
+  }
 });
 </script>
 </body>
