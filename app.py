@@ -84,6 +84,33 @@ def safe_name(text):
     return text.strip()[:120] or "video"
 
 
+def friendly_error(exc):
+    """Turn a noisy yt-dlp exception into a short, clear bilingual message."""
+    msg = str(exc)
+    low = msg.lower()
+
+    if "not a bot" in low or "sign in to confirm" in low:
+        return ("تعذّر تحميل هذا الفيديو من يوتيوب: الموقع محظور من عنوان الخادم "
+                "(IP مركز بيانات). الحل: أضف proxy سكني في إعدادات Render، "
+                "أو استخدم التطبيق المحلي على جهازك. — "
+                "YouTube blocked this server's IP; use a residential proxy or the local app.")
+    if ("login required" in low or "log in" in low or "rate-limit" in low
+            or "rate limit" in low or "requested content is not available" in low):
+        return ("هذا المحتوى يتطلب تسجيل دخول أو أنه محدود. جرّب إضافة cookies "
+                "أو proxy سكني. — This content needs login / is rate-limited; "
+                "add cookies or a residential proxy.")
+    if "private" in low:
+        return "هذا المحتوى خاص ولا يمكن الوصول إليه. — This content is private."
+    if "unavailable" in low or "removed" in low or "deleted" in low:
+        return "الفيديو غير متاح أو محذوف. — This video is unavailable or removed."
+    if "unsupported url" in low or "no video" in low:
+        return "هذا الرابط غير مدعوم أو لا يحتوي على فيديو. — Unsupported link / no video found."
+
+    # Fallback: strip yt-dlp's prefix and the long cookies help text.
+    clean = msg.replace("ERROR:", "").split("Use --cookies")[0].strip()
+    return f"تعذّر قراءة الرابط: {clean[:250]}"
+
+
 def best_thumb(entry):
     """Pick a usable thumbnail URL from either the flat field or the list."""
     if entry.get("thumbnail"):
@@ -156,7 +183,7 @@ def info():
                         "playlistend": MAX_ENTRIES}) as ydl:
             data = ydl.extract_info(url, download=False)
     except Exception as e:
-        return jsonify({"error": f"Could not read this link: {e}"}), 400
+        return jsonify({"error": friendly_error(e)}), 400
 
     # ---- Playlist / story set / carousel ----
     if data.get("_type") == "playlist" and data.get("entries"):
@@ -238,7 +265,7 @@ def download():
             ydl.extract_info(target, download=True)
     except Exception as e:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return jsonify({"error": f"Download failed: {e}"}), 400
+        return jsonify({"error": friendly_error(e)}), 400
 
     files = [f for f in glob.glob(str(Path(tmpdir) / "*")) if os.path.isfile(f)]
     if not files:
