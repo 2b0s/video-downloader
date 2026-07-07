@@ -259,6 +259,57 @@ def download():
     return send_file(filepath, as_attachment=True, download_name=filename)
 
 
+@app.route("/api/diag")
+def diag():
+    """Diagnostics — tells us WHY YouTube fails on Render without seeing logs.
+
+    Reports: is the PO-token provider process reachable, is the yt-dlp plugin
+    loaded, is a proxy set, and does a real YouTube extraction fetch a token.
+    Visit /api/diag on the live site.
+    """
+    import json as _json
+    import urllib.request
+
+    out = {"proxy_set": bool(YTDLP_PROXY)}
+
+    # 1) Is the bgutil provider server running inside the container?
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:4416/ping", timeout=5) as r:
+            out["pot_provider"] = _json.loads(r.read().decode())
+    except Exception as e:
+        out["pot_provider"] = f"UNREACHABLE: {e}"
+
+    # 2) yt-dlp version
+    try:
+        import yt_dlp
+        out["yt_dlp_version"] = yt_dlp.version.__version__
+    except Exception as e:
+        out["yt_dlp_version"] = f"ERR: {e}"
+
+    # 3) Real extraction with verbose logging captured — did it fetch a POT?
+    logs = []
+
+    class _Logger:
+        def debug(self, m): logs.append(str(m))
+        def info(self, m): logs.append(str(m))
+        def warning(self, m): logs.append(str(m))
+        def error(self, m): logs.append(str(m))
+
+    try:
+        opts = {**base_opts(), "skip_download": True, "verbose": True,
+                "quiet": False, "no_warnings": False, "logger": _Logger()}
+        with YoutubeDL(opts) as ydl:
+            ydl.extract_info("https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+                             download=False)
+        out["youtube_extract"] = "OK"
+    except Exception as e:
+        out["youtube_extract"] = f"FAIL: {e}"
+
+    out["pot_logs"] = [l for l in logs
+                       if "pot" in l.lower() or "PO Token" in l][:30]
+    return jsonify(out)
+
+
 if __name__ == "__main__":
     print("=" * 55)
     print("  Video / Story Downloader")
