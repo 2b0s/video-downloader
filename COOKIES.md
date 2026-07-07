@@ -23,6 +23,24 @@ Repeat step 2–3 on **https://www.instagram.com** while logged in, then **appen
 those lines to the same `cookies.txt` (open both in Notepad, paste Instagram's
 cookie lines under YouTube's — keep the first `# Netscape...` header only once).
 
+## Cookieless mode (the hosted Render site)
+
+The Docker image now bakes in the **bgutil PO-token provider**, so **YouTube works
+without cookies** even on Render's datacenter IP — nothing to configure, it just
+runs. (yt-dlp fetches the "proof of origin" token from a local helper process.)
+
+**Instagram** is stricter: it blocks anonymous datacenter access, so cookieless IG
+only works through a **residential proxy**. To turn it on:
+
+1. Get a residential/rotating proxy (e.g. Webshare, IPRoyal — a few $/mo).
+2. In the Render dashboard → your service → **Environment**, add:
+   `YTDLP_PROXY = http://user:pass@host:port`   (or `socks5://…`)
+3. Save — Render redeploys. Now both YouTube **and** Instagram route through a
+   home-style IP and download without cookies.
+
+Leaving `YTDLP_PROXY` unset keeps YouTube cookieless (via the PO-token provider);
+Instagram then still needs a cookies.txt or the proxy above.
+
 ## Important limits
 - **Cookies expire.** If it stops working after days/weeks, re-export.
 - **Never commit cookies.txt to GitHub** — it's your login. `.gitignore` already

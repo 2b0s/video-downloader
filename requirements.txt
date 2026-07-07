@@ -1,4 +1,6 @@
 flask==3.0.3
-yt-dlp>=2024.1.1
+yt-dlp>=2025.1.1
 gunicorn==22.0.0
 curl_cffi>=0.5.10
+# YouTube PO-token support (works with the bgutil provider server in the Docker image)
+bgutil-ytdlp-pot-provider>=1.0.0

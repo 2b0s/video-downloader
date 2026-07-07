@@ -34,6 +34,11 @@ COOKIES_FILE = Path(__file__).parent / "cookies.txt"
 # Safety cap so an enormous playlist can't hang the info request forever.
 MAX_ENTRIES = 100
 
+# Optional residential proxy (Render env var). Set this to route yt-dlp through a
+# home-style IP so YouTube/Instagram don't reject the request as a datacenter bot.
+# e.g. YTDLP_PROXY=http://user:pass@host:port  (or socks5://…)
+YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
+
 
 def find_ffmpeg():
     """Locate ffmpeg so yt-dlp can merge HD video+audio streams."""
@@ -65,6 +70,8 @@ def base_opts():
         opts["ffmpeg_location"] = FFMPEG_DIR
     if COOKIES_FILE.exists():
         opts["cookiefile"] = str(COOKIES_FILE)
+    if YTDLP_PROXY:
+        opts["proxy"] = YTDLP_PROXY
     return opts
 
 
@@ -253,6 +260,7 @@ if __name__ == "__main__":
     print("  Video / Story Downloader")
     print("  ffmpeg:", FFMPEG_DIR or "NOT FOUND (HD merge may fail)")
     print("  cookies:", "loaded" if COOKIES_FILE.exists() else "none")
+    print("  proxy:", YTDLP_PROXY or "none")
     port = int(os.environ.get("PORT", 5000))
     print(f"  Open:   http://127.0.0.1:{port}")
     print("=" * 55)
