@@ -72,6 +72,10 @@ def base_opts():
         opts["cookiefile"] = str(COOKIES_FILE)
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
+    # Force YouTube's POT-backed web clients so the bgutil token provider is
+    # actually used — this is what clears the "confirm you're not a bot" wall on
+    # datacenter IPs. Only affects the youtube extractor; other sites are untouched.
+    opts["extractor_args"] = {"youtube": {"player_client": ["web_safari", "web", "tv"]}}
     return opts
 
 

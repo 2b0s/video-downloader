@@ -1,33 +1,30 @@
 # Video / Story Downloader — production image for Render / any Docker host
 #
-# Includes the bgutil PO-token provider so YouTube works WITHOUT cookies on
+# Cookieless YouTube: we base the image on the official bgutil PO-token provider
+# image (Node 25 + prebuilt server + working `canvas` native dep) and layer the
+# Python web app on top. yt-dlp's companion plugin auto-connects to the provider
+# on 127.0.0.1:4416 and supplies the "proof of origin" token YouTube demands from
 # datacenter IPs. Instagram cookieless still needs a residential proxy — set the
-# YTDLP_PROXY env var on Render to enable it (see COOKIES.md → Cookieless mode).
-FROM python:3.12-slim
+# YTDLP_PROXY env var on Render (see COOKIES.md → Cookieless mode).
+#
+# Pin the provider version to the pip plugin version in requirements.txt.
+FROM brainicism/bgutil-ytdlp-pot-provider:1.3.1
 
-# System deps:
-#   ffmpeg            -> merge HD video+audio
-#   git/curl/node     -> build & run the PO-token provider (pure-JS, no browser)
+# apt + running the provider need root (the base image runs as USER node).
+USER root
+
+# ffmpeg -> merge HD video+audio;  python3 -> run the Flask app.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      ffmpeg git curl ca-certificates && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    npm install -g yarn && \
+      python3 python3-venv python3-pip ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Debian marks the system Python as externally-managed, so use a venv.
+ENV VENV=/opt/venv
+RUN python3 -m venv "$VENV"
+ENV PATH="$VENV/bin:$PATH"
 
-# --- YouTube PO-token provider (bgutil) ---------------------------------------
-# Build the token-provider server once at image build time. yt-dlp's companion
-# plugin (installed via pip below) auto-connects to it on 127.0.0.1:4416 and
-# supplies the "proof of origin" token YouTube demands from cloud IPs.
-RUN git clone --depth 1 \
-      https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && \
-    cd /opt/bgutil/server && \
-    yarn install --frozen-lockfile && \
-    npx tsc
-
+WORKDIR /srv/app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -37,7 +34,11 @@ COPY . .
 ENV PORT=5000
 EXPOSE 5000
 
-# Start the PO-token provider in the background, then the web app.
-# --timeout 600 so long downloads/merges don't get killed by gunicorn.
-CMD node /opt/bgutil/server/build/main.js >/tmp/pot.log 2>&1 & \
+# The base image sets ENTRYPOINT to the provider; reset it so our CMD runs as-is.
+ENTRYPOINT []
+
+# Start the PO-token provider (built into the base image at /app) in the
+# background on :4416, then the web app. --timeout 600 so long downloads/merges
+# aren't killed by gunicorn.
+CMD node /app/build/main.js >/tmp/pot.log 2>&1 & \
     gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 600
